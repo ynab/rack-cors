@@ -68,7 +68,11 @@ module Rack
           add_headers = process_cors(env)
         end
       else
-        Result.miss(env, Result::MISS_NO_ORIGIN)
+        # Let's try anyway, just to make sure that this isn't a case where we are forcing it
+        add_headers = process_cors(env) if env['REQUEST_METHOD'] != 'OPTIONS'
+
+        # If the real reason we missed is because there was no origin, note it
+        Result.miss(env, Result::MISS_NO_ORIGIN) if !add_headers
       end
 
       # This call must be done BEFORE calling the app because for some reason
@@ -243,11 +247,13 @@ module Rack
           @origins = []
           @resources = []
           @public_resources = false
+          @force_if_blank = false
         end
 
         def origins(*args, &blk)
           @origins = args.flatten.collect do |n|
             case n
+            when :force_if_blank then @force_if_blank=true; nil
             when Regexp,
                  /^https?:\/\//,
                  'file://'        then n
@@ -255,18 +261,27 @@ module Rack
             else                  Regexp.compile("^[a-z][a-z0-9.+-]*:\\\/\\\/#{Regexp.quote(n)}")
             end
           end.flatten
+
+          # get rid of the nil if there was one (from force_if_blank)
+          @origins.compact!
           @origins.push(blk) if blk
         end
 
         def resource(path, opts={})
-          @resources << Resource.new(public_resources?, path, opts)
+          @resources << Resource.new(self, public_resources?, path, opts)
         end
 
         def public_resources?
           @public_resources
         end
 
+        def force_if_blank?
+          @force_if_blank
+        end
+
         def allow_origin?(source,env = {})
+          # We early out if there is no source to examine
+          return force_if_blank? if source == nil
           return true if public_resources?
 
           effective_source = (source == 'null' ? 'file://' : source)
@@ -288,18 +303,29 @@ module Rack
           @resources.detect { |r| r.matches_path?(path) }
         end
 
+        def origin_for_response_header(origin, credentials)
+          return '*' if public_resources? && !credentials
+          if origin.nil?
+            # Let's just take the first origin and return that
+            origin = @origins.find{ |x| !x.nil? && !x.empty? }
+            raise "Expected to find an origin" if origin.nil?
+          end
+          origin
+        end
+
       end
 
       class Resource
         attr_accessor :path, :methods, :headers, :expose, :max_age, :credentials, :pattern, :if_proc, :vary_headers
 
-        def initialize(public_resource, path, opts={})
+        def initialize(parent_resources_group, public_resource, path, opts={})
           self.path         = path
           self.credentials  = opts[:credentials].nil? ? true : opts[:credentials]
           self.max_age      = opts[:max_age] || 1728000
           self.pattern      = compile(path)
           self.if_proc      = opts[:if]
           self.vary_headers = opts[:vary] && [opts[:vary]].flatten
+          @parent_resources = parent_resources_group
           @public_resource  = public_resource
 
           self.headers = case opts[:headers]
@@ -334,7 +360,7 @@ module Rack
         def to_headers(env)
           x_origin = env['HTTP_ACCESS_CONTROL_REQUEST_HEADERS']
           h = {
-            'Access-Control-Allow-Origin'     => origin_for_response_header(env[ORIGIN_HEADER_KEY]),
+            'Access-Control-Allow-Origin'     => @parent_resources.origin_for_response_header(env[ORIGIN_HEADER_KEY], credentials),
             'Access-Control-Allow-Methods'    => methods.collect{|m| m.to_s.upcase}.join(', '),
             'Access-Control-Expose-Headers'   => expose.nil? ? '' : expose.join(', '),
             'Access-Control-Max-Age'          => max_age.to_s }
@@ -345,11 +371,6 @@ module Rack
         protected
           def public_resource?
             @public_resource
-          end
-
-          def origin_for_response_header(origin)
-            return '*' if public_resource? && !credentials
-            origin
           end
 
           def to_preflight_headers(env)

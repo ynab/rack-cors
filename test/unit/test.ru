@@ -42,4 +42,11 @@ use Rack::Cors do
     origins '*'
     resource '/multi-allow-config', :max_age => 300, :credentials => false
   end
+
+  allow do
+    origins :force_if_blank, 'http://forced-origin.com'
+    resource '/forced'
+    resource '/forced_without_credentials', :credentials => false
+  end
+
 end

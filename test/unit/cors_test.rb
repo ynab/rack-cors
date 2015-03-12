@@ -125,6 +125,25 @@ describe Rack::Cors do
     cors_request '/conditional', :origin => 'http://192.168.0.1:1234'
   end
 
+  it "should apply CORS headers if no origin is specified and force_if_blank is used." do
+    get '/forced'
+    should_render_cors_success
+    last_response.headers['Access-Control-Allow-Origin'].must_equal 'http://forced-origin.com'
+  end
+
+  it "should apply CORS headers if an origin is specified and force_if_blank is used." do
+    cors_request '/forced', :origin => 'http://forced-origin.com'
+    should_render_cors_success
+  end
+
+  it "should not CORS headers if the origin doesn't match and force_if_blank is used." do
+
+    header 'Origin', 'http://invalid-origin.com'
+    get '/forced'
+    should_render_cors_failure
+  end
+
+
  describe 'logging' do
     it 'should not log debug messages if debug option is false' do
       app = mock
