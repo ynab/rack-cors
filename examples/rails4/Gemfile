@@ -40,5 +40,5 @@ gem 'spring',        group: :development
 # Use debugger
 # gem 'debugger', group: [:development, :test]
 
-gem 'rack-cors', '0.3.0'
+gem 'rack-cors', '1.0.3'
 #gem 'rack-cors', :path => '../..'
